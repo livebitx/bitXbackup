@@ -1,0 +1,4 @@
+*.exe
+*.dll
+*.partial
+.bitXbackup_*

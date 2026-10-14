@@ -1,0 +1,52 @@
+name: Build Windows
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack bundled 7-Zip
+        shell: pwsh
+        run: |
+          Expand-Archive bitXbackup_0.1.0_Windows.zip -DestinationPath bundled
+          Copy-Item bundled/bitXbackup/7z.exe,bundled/bitXbackup/7z.dll,bundled/bitXbackup/bitXbackup.ico -Destination .
+      - name: Compile and test
+        shell: powershell
+        run: |
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          & $compiler /nologo /target:winexe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Runtime.Serialization.dll /win32icon:bitXbackup.ico /resource:bitXbackup.ico,bitXbackup.ico /resource:7z.exe,7z.exe /resource:7z.dll,7z.dll /out:bitXbackup.exe Program.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $process = Start-Process -FilePath (Join-Path (Get-Location) 'bitXbackup.exe') -ArgumentList '--test' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Core / 7-Zip integration tests failed.' }
+      - name: Prepare full package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path distribution/bitXbackup -Force | Out-Null
+          Copy-Item Program.cs,Build.cmd,README.md,7ZIP-LICENSE.txt,bitXbackup.ico,7z.exe,7z.dll,bitXbackup.exe -Destination distribution/bitXbackup
+          Compress-Archive distribution/bitXbackup -DestinationPath bitXbackup_0.1.0_full_Windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitXbackup-0.1.0-Windows
+          path: |
+            bitXbackup.exe
+            bitXbackup_0.1.0_full_Windows.zip
+            7ZIP-LICENSE.txt
+          if-no-files-found: error
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v0.1.0'
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title 'bitXbackup 0.1.0' --notes 'Portable Windows folder backup application with bundled 7-Zip, optional encryption, VPN selections and import/export of folder lists. The full ZIP includes the EXE, sources, dependencies and license. Automated Windows tests cover file copying, settings, plain/encrypted archives, integrity testing and password rejection. GUI testing on a real PC is still needed.'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          gh release upload $tag bitXbackup.exe bitXbackup_0.1.0_full_Windows.zip 7ZIP-LICENSE.txt --clobber --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
